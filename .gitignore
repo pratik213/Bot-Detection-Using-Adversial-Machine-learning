@@ -4,3 +4,4 @@ __pycache__/
 access_log.processed
 access_ssl_log.processed
 .DS_Store
+.venv
