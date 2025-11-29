@@ -2,10 +2,13 @@ import pandas as pd
 import numpy as np
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import confusion_matrix, classification_report, roc_auc_score, roc_curve, precision_score, recall_score, f1_score
+import matplotlib.pyplot as plt
 
 # Configuration
 INPUT_FILE = 'parsed_access_log.csv'
 OUTPUT_FILE = 'diecast_ip_anomaly_scores.csv'
+EVAL_PLOT_FILE = 'evaluation_plots.png'
 SUSPICIOUS_KEYWORDS = ["bot", "crawl", "spider", "python", "curl", "monitoring", "googlebot"]
 
 def load_and_preprocess(file_path):
@@ -91,6 +94,64 @@ def train_isolation_forest(df_ip):
     
     return df_ip
 
+def evaluate_model(df_ip):
+    """
+    Evaluates the anomaly detection model using ua_bot_flag as a weak label.
+    Note: Isolation Forest is unsupervised. We are using known bots (ua_bot_flag)
+    to check if the model correctly identifies them as anomalies.
+    """
+    print("\n--- Model Evaluation (Weak Labels) ---")
+    
+    y_true = df_ip['ua_bot_flag']
+    y_pred = df_ip['is_anomaly']
+    
+    # 1. Confusion Matrix & Metrics
+    cm = confusion_matrix(y_true, y_pred)
+    tn, fp, fn, tp = cm.ravel()
+    
+    print("Confusion Matrix:")
+    print(cm)
+    print(f"TP: {tp}, FN: {fn}, FP: {fp}, TN: {tn}")
+    
+    print("\nClassification Report:")
+    print(classification_report(y_true, y_pred, target_names=['Likely Human', 'Likely Bot']))
+    
+    # 2. ROC-AUC
+    # We use -anomaly_score because lower score = more anomalous. 
+    # ROC expects higher score = positive class (anomaly).
+    # So we negate the score.
+    try:
+        roc_auc = roc_auc_score(y_true, -df_ip['anomaly_score'])
+        print(f"ROC-AUC Score: {roc_auc:.4f}")
+    except Exception as e:
+        print(f"Could not calculate ROC-AUC: {e}")
+        roc_auc = 0
+
+    # 3. Plots
+    print(f"\nGenerating evaluation plots to {EVAL_PLOT_FILE}...")
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    
+    # Bar Chart of Confusion Matrix
+    metrics = ['True Positives', 'False Negatives', 'False Positives', 'True Negatives']
+    values = [tp, fn, fp, tn]
+    ax1.bar(metrics, values, color=['green', 'red', 'orange', 'blue'])
+    ax1.set_title('Confusion Matrix Counts')
+    ax1.set_ylabel('Count')
+    ax1.tick_params(axis='x', rotation=45)
+    
+    # ROC Curve
+    fpr, tpr, thresholds = roc_curve(y_true, -df_ip['anomaly_score'])
+    ax2.plot(fpr, tpr, label=f'ROC Curve (AUC = {roc_auc:.2f})')
+    ax2.plot([0, 1], [0, 1], 'k--', label='Random')
+    ax2.set_xlabel('False Positive Rate')
+    ax2.set_ylabel('True Positive Rate')
+    ax2.set_title('ROC Curve')
+    ax2.legend()
+    
+    plt.tight_layout()
+    plt.savefig(EVAL_PLOT_FILE)
+    print("Done.")
+
 def main():
     # 1. Load
     try:
@@ -127,7 +188,10 @@ def main():
     bot_anomalies = top_anomalies[top_anomalies['ua_bot_flag'] == 1]
     print(f"\nNumber of top 20 anomalies with ua_bot_flag=1: {len(bot_anomalies)}")
     
-    # 8. Save
+    # 8. Evaluation
+    evaluate_model(df_ip)
+    
+    # 9. Save
     print(f"\nSaving results to {OUTPUT_FILE}...")
     df_ip.to_csv(OUTPUT_FILE)
     print("Done.")
